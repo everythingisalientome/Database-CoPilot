@@ -1,0 +1,4 @@
+.vscode/
+process-copilot/.vscode/
+process-copilot/node_modules/
+process-copilot/out/
