@@ -52,6 +52,8 @@
   },
   "dependencies": {
     "@types/mssql": "^9.1.6",
-    "mssql": "^11.0.1"
+    "mssql": "^11.0.1",
+    "@types/dotenv": "^6.1.1",
+    "dotenv": "^16.5.0"
   }
 }

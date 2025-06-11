@@ -1,5 +1,5 @@
 import * as mssql from 'mssql';
-
+import * as dotenv from 'dotenv';
 
 
 //const DB_CONTEXT_QUERY = "with descriptions as ( select ' /*' + cast(ep.value as varchar(1000)) + '*/ ' as [value], obj.name as table_name, col.name as column_name, case when minor_id = 0 then 'TABLE' else 'COLUMN' end as description_type from sys.extended_properties ep inner join sys.objects obj on obj.object_id = ep.major_id /*decode minor_id as coulmn id*/ left join sys.columns col on col.object_id = ep.major_id and col.column_id = ep.minor_id where ep.name = 'Description' ), foreignKeysRelations as ( /*  get all foreign keys relations in current database  */ select distinct t.name as sourceTableName, c.name as sourceColumnName, rt.name as targetTableName, fc.name as targetColumnName, ' /* references ' + rt.name + '.' + fc.name + ' */ ' as [value] from sys.columns c inner join sys.foreign_key_columns fkc on fkc.parent_object_id = c.object_id and fkc.parent_column_id = c.column_id inner join sys.columns fc on fc.object_id = fkc.referenced_object_id and fc.column_id = fkc.referenced_column_id inner join sys.tables t on t.object_id = fkc.parent_object_id inner join sys.tables rt on rt.object_id = fkc.referenced_object_id where c.object_id in ( select object_id from sys.tables where type = 'U' ) ) select '-- Table ' + t.table_schema + '.[' + t.table_name + '] ' + coalesce(td.[value], '') + ' (' + stuff( ( select ', [' + c.column_name + '] ' + data_type + case when character_maximum_length is not null then '(' + cast(character_maximum_length as varchar(10)) + ')' else '' end + case when is_nullable = 'NO' then ' not null' else '' end + coalesce(cd.[value], '') + coalesce(fkr.[value], '') from information_schema.columns c left join descriptions cd on cd.table_name = c.table_name and cd.column_name = c.column_name and cd.description_type = 'COLUMN' left join foreignKeysRelations fkr on fkr.sourceTableName = c.table_name and fkr.sourceColumnName = c.column_name where c.table_name = t.table_name order by ordinal_position for xml path('') ), 1, 2, '' ) + ');' from information_schema.tables t left join descriptions td on td.table_name = t.table_name and td.description_type = 'TABLE' where table_type = 'BASE TABLE' order by t.table_schema, t.table_name";
@@ -10,13 +10,22 @@ const DB_CONTEXT_QUERY = "with foreingKeysRelations as ( /*  get all foreign key
  */
 export async function getDatabasePool(): Promise<mssql.ConnectionPool> {
     try {
+        const path = require('path');
+        const envPath = path.resolve(__dirname, '../..', '.env');
+        console.log(require("dotenv").config(envPath));
+
+        require("dotenv").config({path: envPath});
+        let dbUser:string = process.env.DB_USER ?? "";
+        let dbPass:string = process.env.DB_PASS ?? "";
+        let dbServer:string = process.env.DB_SERVER ?? "";
+        let database:string = process.env.DATABASE_NAME ?? "";
         
         const config: mssql.config = {
-            user: "user",
-            password: "password",
-            server: "192.168.0.1",
+            user: dbUser,
+            password: dbPass,
+            server: dbServer,
             port: 11000,
-            database: "WideWorldImporters",
+            database: database,
             options: {
                 //encrypt: true, // Use encryption for the connection
                 trustServerCertificate: true, // Trust the server certificate (useful for self-signed certificates)

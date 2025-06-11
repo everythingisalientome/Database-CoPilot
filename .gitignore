@@ -2,3 +2,4 @@
 process-copilot/.vscode/
 process-copilot/node_modules/
 process-copilot/out/
+process-copilot/.env

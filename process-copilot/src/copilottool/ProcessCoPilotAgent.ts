@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 import Logger from '../utilities/logUtils';
 import { getDatabaseContext, getDatabasePool, runQuery } from '../utilities/databaseUtils';
+import { IRecordSet, IResult } from 'mssql';
 
 async function activateProcessCopilotAgent(context: vscode.ExtensionContext) {
     Logger.log('Activating Process Copilot Agent...');
@@ -18,7 +19,7 @@ async function activateProcessCopilotAgent(context: vscode.ExtensionContext) {
             const chatModels =  await vscode.lm.selectChatModels({family: 'gpt-4'});
 
             response.progress("Reading database context...");
-            const pool = await getDatabasePool();
+            let pool = await getDatabasePool();
             try{
                 const dbContext = await getDatabaseContext(pool);
 
@@ -48,39 +49,131 @@ async function activateProcessCopilotAgent(context: vscode.ExtensionContext) {
                 console.log("match: "+ match);
 
                 if (match && match[1]) {
-                    response.button({ 
-                        title: 'Run Query', 
-                        command: 'process-copilot.runQuery', 
-                        arguments: [match[1]] 
-                    });
-                }
+                    response.progress("Query received let me work on data.");
+                    if(pool === undefined || pool === null || pool.connected === false){
+                        pool = await getDatabasePool();
+                    }
+
+                    const sqlResults = await runQuery(pool, match[1]);
+                    console.log("rowsAffected: ", sqlResults.rowsAffected);
+
+                    response.progress("Take a look at data.");
+                    const formattedData = formatIResultAsHtmlTable(sqlResults);
+                    // Create a webview panel to display the results
+                    const datapanel = vscode.window.createWebviewPanel(
+                        'resultsWebview',
+                        'SQL Query Results',
+                        vscode.ViewColumn.One,
+                        {
+                            enableScripts: true,
+                        });
+                    
+                    datapanel.webview.html = getSQLWebviewContent(formattedData);
+                    
+                    response.progress("Working on the view.");
+                    const new_messages = [
+                        vscode.LanguageModelChatMessage.Assistant("You are D3.js expert with significant experience with SQL databases and JSON formats."+
+                            "You will be provided with the JSON Response and you will need to do as follows:"+
+                            "1. First you will convert the JSON Response to a D3.js compatible data format."+
+                            "2. You will then used the converted D3.js compatible data and create an html page and create d3js charts"+
+                            "\n\n JSON Response : "+ JSON.stringify(sqlResults.recordset) +"\n\n"+
+                            "You will only generate D3.js compatible html page with the charts and nothing else."+
+                            "Do not provide any other text or explanation or any markdown format"),
+                    ];
+
+                    const botResponseStream = await chatModels[0].sendRequest(new_messages, undefined, token);
+                    let fullResponse = '';
+                    for await (const chunk of botResponseStream.text) {
+                        fullResponse += chunk;
+                    }
+                    
+                    const panel = vscode.window.createWebviewPanel(
+                        'chartsWebview',
+                        'SQL Query Results',
+                        vscode.ViewColumn.One,
+                        {
+                            enableScripts: true,
+                        });
+                    
+                    panel.webview.html = getSQLWebviewContent(fullResponse);
+                } 
             }catch (error) {
-                Logger.error('Error getting database pool: ', error);
+                Logger.error('Error: ', error);
             }
             finally{
                 pool.close();
             }
 
-            //Register the command to run the SQL query
-            vscode.commands.registerCommand('process-copilot.runQuery', async (sqlQuery: string) => {
-                const pool = await getDatabasePool();
-                try{
-                    const sqlResults = (await runQuery(pool, sqlQuery));
-                    console.log("output: "+ sqlResults.output);
-                    console.log("rowsAffected: ", sqlResults.rowsAffected);
-
-                }catch (error) {
-                    Logger.error('Error running query: ', error);
-                    vscode.window.showErrorMessage('Failed to run the SQL query. Please check the console for details.');
-                    return;
-                }finally{
-                    pool.close();
-                }
-                
-            });
             
     });
+
+    
     Logger.log('Process Copilot Agent activated successfully.');
 }
 
 export {activateProcessCopilotAgent};
+
+/**
+ * Converts a SQL IResult<any> object to an HTML table string.
+ * @param result The result object returned by mssql query.
+ * @returns A string containing the HTML table.
+ */
+export function formatIResultAsHtmlTable(result: IResult<any>): string {
+  const rows = result.recordset;
+
+  if (!rows || rows.length === 0) {
+    return '<table border="1"><tr><td>No data</td></tr></table>';
+  }
+
+  const columns = Object.keys(rows[0]);
+  let html = '<table border="1"><thead><tr>';
+
+  // Header
+  html += columns.map(col => `<th>${escapeHtml(col)}</th>`).join('');
+  html += '</tr></thead><tbody>';
+
+  // Rows
+  rows.forEach(row => {
+    html += '<tr>';
+    html += columns.map(col => `<td>${escapeHtml(String(row[col]))}</td>`).join('');
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  return html;
+}
+
+// Optional: Escape HTML entities to prevent XSS or broken layout
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, match => {
+    const escapeMap: { [key: string]: string } = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;',
+    };
+    return escapeMap[match];
+  });
+}
+
+function getSQLWebviewContent(sqlResultsHTML: string): string {
+  return `<!DOCTYPE html>
+<html>
+  <body>
+    ${sqlResultsHTML}
+  </body>
+</html>`;
+}
+
+function getD3WebviewContent(results: string): string {
+  return `<!DOCTYPE html>
+<html>
+    <head>
+        <script src="https://d3js.org/d3.v7.min.js"></script>
+    </head>
+    <body>
+        ${results}
+    </body>
+</html>`;
+}
