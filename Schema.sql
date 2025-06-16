@@ -1,5 +1,5 @@
 -- Complete Database Schema Information Query
--- This query returns tables, columns, data types, constraints, and relationships in one result set
+-- Compatible with SQL Server 2012 and later versions
 
 WITH TableInfo AS (
     -- Get basic table information
@@ -63,20 +63,24 @@ ForeignKeyInfo AS (
 ),
 
 IndexInfo AS (
-    -- Get index information
+    -- Get index information using XML PATH for concatenation
     SELECT 
         SCHEMA_NAME(t.schema_id) AS INDEX_SCHEMA,
         t.name AS TABLE_NAME,
         i.name AS INDEX_NAME,
         i.type_desc AS INDEX_TYPE,
         i.is_unique AS IS_UNIQUE_INDEX,
-        STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) AS INDEX_COLUMNS
+        STUFF((
+            SELECT ', ' + c2.name
+            FROM sys.index_columns ic2
+            INNER JOIN sys.columns c2 ON ic2.object_id = c2.object_id AND ic2.column_id = c2.column_id
+            WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id
+            ORDER BY ic2.key_ordinal
+            FOR XML PATH('')
+        ), 1, 2, '') AS INDEX_COLUMNS
     FROM sys.tables t
     INNER JOIN sys.indexes i ON t.object_id = i.object_id
-    INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-    INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
     WHERE i.type > 0  -- Exclude heaps
-    GROUP BY SCHEMA_NAME(t.schema_id), t.name, i.name, i.type_desc, i.is_unique
 )
 
 -- Main query combining all information
@@ -100,13 +104,19 @@ SELECT
     fki.DELETE_ACTION,
     fki.UPDATE_ACTION,
     
-    -- Index Information
-    STRING_AGG(DISTINCT CONCAT(ii.INDEX_NAME, ' (', ii.INDEX_TYPE, ')'), '; ') AS INDEXES,
+    -- Index Information (using subquery for compatibility)
+    STUFF((
+        SELECT '; ' + ii2.INDEX_NAME + ' (' + ii2.INDEX_TYPE + ')'
+        FROM IndexInfo ii2 
+        WHERE ii2.INDEX_SCHEMA = ci.TABLE_SCHEMA 
+        AND ii2.TABLE_NAME = ci.TABLE_NAME
+        FOR XML PATH('')
+    ), 1, 2, '') AS INDEXES,
     
     -- Relationship Summary
     CASE 
         WHEN fki.FK_NAME IS NOT NULL 
-        THEN CONCAT('FK: ', fki.FK_COLUMN, ' -> ', fki.REFERENCED_SCHEMA, '.', fki.REFERENCED_TABLE, '.', fki.REFERENCED_COLUMN)
+        THEN 'FK: ' + fki.FK_COLUMN + ' -> ' + fki.REFERENCED_SCHEMA + '.' + fki.REFERENCED_TABLE + '.' + fki.REFERENCED_COLUMN
         ELSE NULL 
     END AS RELATIONSHIP_SUMMARY
 
@@ -118,28 +128,6 @@ LEFT JOIN ForeignKeyInfo fki
     ON ci.TABLE_SCHEMA = fki.FK_SCHEMA 
     AND ci.TABLE_NAME = fki.FK_TABLE 
     AND ci.COLUMN_NAME = fki.FK_COLUMN
-LEFT JOIN IndexInfo ii 
-    ON ci.TABLE_SCHEMA = ii.INDEX_SCHEMA 
-    AND ci.TABLE_NAME = ii.TABLE_NAME
-
-GROUP BY 
-    ti.TABLE_SCHEMA,
-    ti.TABLE_NAME,
-    ti.TABLE_TYPE,
-    ci.COLUMN_NAME,
-    ci.ORDINAL_POSITION,
-    ci.FULL_DATA_TYPE,
-    ci.IS_NULLABLE,
-    ci.COLUMN_DEFAULT,
-    ci.IS_PRIMARY_KEY,
-    ci.IS_UNIQUE,
-    fki.FK_NAME,
-    fki.FK_COLUMN,
-    fki.REFERENCED_SCHEMA,
-    fki.REFERENCED_TABLE,
-    fki.REFERENCED_COLUMN,
-    fki.DELETE_ACTION,
-    fki.UPDATE_ACTION
 
 ORDER BY 
     ti.TABLE_SCHEMA,
